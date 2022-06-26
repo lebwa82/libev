@@ -4,6 +4,22 @@
 #include <ev.h>
 
 
+void StrRev(char *S)
+{
+     int i,j,l;
+     char t;
+     l=strlen(S);
+     i=0;
+     j=l-1;
+     while (i<j)
+     {
+        t=S[i];
+        S[i]=S[j];
+        S[j]=t;
+        i++;j--;
+      }
+}
+
 int read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
     char buffer[1024];
@@ -21,16 +37,15 @@ int read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
     if(r>0)
     {
         send(watcher->fd, buffer, r, MSG_NOSIGNAL);
-
     }
 }
 
 
 int accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-    int client_sd = accept(watcher->fd, 0, 0);
+    int client_sd = accept(watcher->fd, 0, 0);//accept я еще видимо делаю в главном потоке
 
-    struct ev_io *w_client = (struct ev_io *) malloc(sizeof(struct ev_io));
+    struct ev_io *w_client = (struct ev_io *) malloc(sizeof(struct ev_io));//а читаю уже видимо в другом потоке
     ev_io_init(w_client, read_cb, client_sd, EV_READ);
     ev_io_start(loop, w_client);
 }
