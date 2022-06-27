@@ -38,7 +38,9 @@ int accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 int main(int argc, char **argv)
 {
-    printf("Hello world!\n");
+    printf("Enter tcp port\n");
+    int port;
+    scanf("%d", &port);
     struct ev_loop *loop = ev_default_loop(0);
 
     int sd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -46,11 +48,11 @@ int main(int argc, char **argv)
     struct sockaddr_in addr;
     bzero(&addr, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(12345);
+    addr.sin_port = htons(port);
     addr.sin_addr.s_addr = INADDR_ANY;
     bind(sd, (struct sockaddr *)&addr, sizeof(addr));
 
-    listen(sd, SOMAXCONN);
+    listen(sd, 5);
 
     struct ev_io w_accept;
     ev_io_init(&w_accept, accept_cb, sd, EV_READ);
