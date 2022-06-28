@@ -21,7 +21,6 @@ int read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
     if(r>0)
     {
         send(watcher->fd, buffer, r, MSG_NOSIGNAL);
-
     }
 }
 
@@ -43,7 +42,7 @@ int main(int argc, char **argv)
     scanf("%d", &port);
     struct ev_loop *loop = ev_default_loop(0);
 
-    int sd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int sd = socket(AF_INET, SOCK_STREAM, 0);
 
     struct sockaddr_in addr;
     bzero(&addr, sizeof(addr));
