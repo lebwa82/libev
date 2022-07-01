@@ -7,21 +7,21 @@
 
 pthread_mutex_t my_mutex;
 
-typedef struct head_tack_send_el
+typedef struct Queue
 {
     char buffer[1024];
     int client_sd;
-    struct Stack *next;
-}Stack;
+    struct Queue *next;
+}Queue;
 
-Stack* add_to_Stack(Stack *head, Stack *tail, Stack* a)
+Queue* add_to_Queue(Queue *head, Queue *tail, Queue* a)
 {
     tail->next = a;
     tail = a;
     return a;
 }
 
-Stack* pop_from_Stack(Stack *head, Stack* tail)//правда теперь это уже не стек, а очередь
+Queue* pop_from_Queue(Queue *head, Queue* tail)//правда теперь это уже не стек, а очередь
 {
     if(head->next ==NULL)
     {
@@ -31,36 +31,36 @@ Stack* pop_from_Stack(Stack *head, Stack* tail)//правда теперь эт�
     if(head->next == tail)//всего один элемент
     {
         tail = head;
-        Stack *a = head->next;
+        Queue *a = head->next;
         head->next = NULL;
         return a;
     }
     else//элементов много - хвост спокоен
     {
-        Stack *a = head->next;
+        Queue *a = head->next;
         head->next = NULL;
         return a;
     }
 }
 
-Stack* create_stack(int client_sd)
+Queue* create_Queue(int client_sd)
 {
-    Stack* a = (Stack*)malloc(sizeof(Stack));
+    Queue* a = (Queue*)malloc(sizeof(Queue));
     strcpy(a->buffer, "\0");
     a->client_sd = client_sd;
     a->next = NULL;
     return a;
 }
 
-Stack* head_Stack_read_el;//нулевой элемент стека для чтения сообщения
-Stack* tail_Stack_read_el;
-Stack* head_Stack_send_el;//нулевой элемент стека для посылки сообщения
-Stack* tail_Stack_send_el;
+Queue* head_Queue_read_el;//нулевой элемент стека для чтения сообщения
+Queue* tail_Queue_read_el;
+Queue* head_Queue_send_el;//нулевой элемент стека для посылки сообщения
+Queue* tail_Queue_send_el;
 
 
 void StrRev()
 {
-    Stack* a = pop_from_Stack(head_Stack_read_el, tail_Stack_read_el);
+    Queue* a = pop_from_Queue(head_Queue_read_el, tail_Queue_read_el);
     char *buffer = a->buffer;//поскольку это указатель он должен менять строку
     int i,j,l;
     char t;
@@ -78,7 +78,7 @@ void StrRev()
     //послать сигнал
     pthread_mutex_lock(&my_mutex);//операции со стеком надо защитить, тк с ним работают два процесса одновременно
     //а с буфером может работать только один
-    add_to_Stack(head_Stack_send_el, tail_Stack_send_el ,a);
+    add_to_Queue(head_Queue_send_el, tail_Queue_send_el ,a);
     pthread_mutex_unlock(&my_mutex);
     raise(SIGUSR2);//послать сигнал в главный поток о том, что можно отрпавлять
 
@@ -98,11 +98,11 @@ void *myThreadFun()
 
 
 
-
 int read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
     //char buffer[1024];
-    Stack* p = create_stack(watcher->fd);
+    Queue* p = create_Queue(watcher->fd);
+    //printf("read_cb\n");
     ssize_t r = recv(watcher->fd, p->buffer, sizeof(p->buffer), MSG_NOSIGNAL);
     if(r<0)
     {
@@ -110,7 +110,7 @@ int read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
     }
     if(r==0)
     {
-        printf("disconnected %d", watcher->fd);
+        printf("disconnected %d\n", watcher->fd);
         ev_io_stop(loop, watcher);
         free(watcher);
         free(p);
@@ -118,7 +118,7 @@ int read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
     }
     if(r>0)
     {
-        add_to_Stack(head_Stack_read_el, tail_Stack_read_el ,p);
+        add_to_Queue(head_Queue_read_el, tail_Queue_read_el ,p);
         raise(SIGUSR1);//послать сигнал в второй поток, что данные можно обрабатывать
     }
 }
@@ -135,17 +135,18 @@ int accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 int send_func()
 {
-    Stack* a = pop_from_Stack(head_Stack_send_el, tail_Stack_send_el);
+    Queue* a = pop_from_Queue(head_Queue_send_el, tail_Queue_send_el);
     send(a->client_sd, a->buffer, strlen(a->buffer), 0);
     send(a->client_sd, "\n", 1 , 0);
+    free(a);
 }
 
 int main(int argc, char **argv)
 {
-    head_Stack_read_el = create_stack(-1);
-    tail_Stack_read_el = head_Stack_read_el;
-    head_Stack_send_el = create_stack(-1);
-    tail_Stack_send_el = head_Stack_send_el;
+    head_Queue_read_el = create_Queue(-1);
+    tail_Queue_read_el = head_Queue_read_el;
+    head_Queue_send_el = create_Queue(-1);
+    tail_Queue_send_el = head_Queue_send_el;
 
     pthread_t thread;
     pthread_create(&thread, NULL, myThreadFun, NULL);//создаем второй поток
