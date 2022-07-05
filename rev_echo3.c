@@ -58,9 +58,17 @@ Queue* head_Queue_send_el;//нулевой элемент стека для по
 Queue* tail_Queue_send_el;
 
 
+struct ev_loop* main_loop;
+struct ev_loop* thread_loop;
+struct ev_async w_main_async;
+struct ev_async w_thread_async;
+
+
 void StrRev()
 {
+    pthread_mutex_lock(&my_mutex);
     Queue* a = pop_from_Queue(head_Queue_read_el, tail_Queue_read_el);
+    pthread_mutex_unlock(&my_mutex);
     char *buffer = a->buffer;//поскольку это указатель он должен менять строку
     int i,j,l;
     char t;
@@ -80,64 +88,71 @@ void StrRev()
     //а с буфером может работать только один
     add_to_Queue(head_Queue_send_el, tail_Queue_send_el ,a);
     pthread_mutex_unlock(&my_mutex);
-    raise(SIGUSR2);//послать сигнал в главный поток о том, что можно отрпавлять
+
+    //raise(SIGUSR2);//послать сигнал в главный поток о том, что можно отрпавлять
+    ev_async_send(main_loop, &w_main_async);
+
 
 }
 
 void *myThreadFun()
 {
-    struct ev_loop *loop = ev_loop_new(0);
-    struct ev_signal w_signal;
-    ev_signal_init(&w_signal, StrRev, SIGUSR1);
-    ev_signal_start(loop, &w_signal);
-    while(1)
-    {
-        ev_loop(loop, 0);
-    }
+    thread_loop = ev_loop_new(0);
+    //переписываем через асинхронный ватчер
+    ev_async_init(&w_thread_async, StrRev);
+    ev_async_start(thread_loop, &w_thread_async);
+    ev_loop(thread_loop, 0);
 }
 
 
 
-int read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+int read_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
 {
-    //char buffer[1024];
     Queue* p = create_Queue(watcher->fd);
-    //printf("read_cb\n");
     ssize_t r = recv(watcher->fd, p->buffer, sizeof(p->buffer), MSG_NOSIGNAL);
     if(r<0)
     {
+        printf("error in %d\n", watcher->fd);
+        ev_io_stop(main_loop, watcher);
+        free(watcher);
+        free(p);
         return 0;
     }
     if(r==0)
     {
         printf("disconnected %d\n", watcher->fd);
-        ev_io_stop(loop, watcher);
+        ev_io_stop(main_loop, watcher);
         free(watcher);
         free(p);
         return 0;
     }
     if(r>0)
     {
+        pthread_mutex_lock(&my_mutex);
         add_to_Queue(head_Queue_read_el, tail_Queue_read_el ,p);
-        raise(SIGUSR1);//послать сигнал в второй поток, что данные можно обрабатывать
+        pthread_mutex_unlock(&my_mutex);
+        //послать сигнал в второй поток, что данные можно обрабатывать
+        ev_async_send(thread_loop, &w_thread_async);
     }
 }
 
 
-int accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+int accept_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
 {
     int client_sd = accept(watcher->fd, 0, 0);
     printf("New connection, allocated sd = %d\n", client_sd);
     struct ev_io *w_client = (struct ev_io *) malloc(sizeof(struct ev_io));
     ev_io_init(w_client, read_cb, client_sd, EV_READ);
-    ev_io_start(loop, w_client);
+    ev_io_start(main_loop, w_client);
 }
 
 int send_func()
 {
+    pthread_mutex_lock(&my_mutex);
     Queue* a = pop_from_Queue(head_Queue_send_el, tail_Queue_send_el);
+    pthread_mutex_unlock(&my_mutex);
     send(a->client_sd, a->buffer, strlen(a->buffer), 0);
-    //send(a->client_sd, "\n", 1 , 0);
+    send(a->client_sd, "\n", 1 , 0);
     free(a);
 }
 
@@ -154,9 +169,13 @@ int main(int argc, char **argv)
     printf("Enter tcp port\n");
     int port;
     scanf("%d", &port);
-    struct ev_loop *loop = ev_default_loop(0);
+    main_loop = ev_default_loop(0);
 
     int sd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sd == -1) {
+        perror("HH_ERROR: error in calling socket()");
+        exit(1);
+    };
 
     struct sockaddr_in addr;
     bzero(&addr, sizeof(addr));
@@ -167,24 +186,25 @@ int main(int argc, char **argv)
     int b = bind(sd, (struct sockaddr *)&addr, sizeof(addr));
     if (b < 0)
     {
-        printf("port already bound\n");
+        perror("HH_ERROR: bind() call failed");
         return 0;
     }
 
-    listen(sd, 5);
+    int l = listen(sd, 5);
+    if(l < 0)
+    {
+        perror("HH_ERROR: listen() call failed");
+        exit(1);
+    }
 
     struct ev_io w_accept;
     ev_io_init(&w_accept, accept_cb, sd, EV_READ);
-    ev_io_start(loop, &w_accept);
-
-    struct ev_signal w_signal;
-    ev_signal_init(&w_signal, send_func, SIGUSR2);//когда второй поток обработал - можно отправлять
-    ev_signal_start(loop, &w_signal);
-
-    while(1)
-    {
-        ev_loop(loop, 0);
-    }
+    ev_io_start(main_loop, &w_accept);
+    
+    ev_async_init(&w_main_async, send_func);
+    ev_async_start(main_loop, &w_main_async);
+    ev_loop(main_loop, 0);
+    
     return 0;
 
 }
