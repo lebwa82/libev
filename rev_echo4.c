@@ -6,23 +6,24 @@
 #include <pthread.h>
 #include <sys/queue.h> 
 
-pthread_mutex_t my_mutex;
+static pthread_mutex_t my_mutex;
 
 struct entry {
-    int data;
     char buffer[1024];
-    int client_sd;
+    int client_fd;
     STAILQ_ENTRY(entry) entries;        
 };
 
 STAILQ_HEAD(stailhead, entry);
-struct stailhead head_read; 
-struct stailhead head_send; 
+static struct stailhead head_read; 
+static struct stailhead head_send; 
 
-struct ev_loop* main_loop;
-struct ev_loop* thread_loop;
-struct ev_async w_main_async;
-struct ev_async w_thread_async;
+static struct ev_loop* main_loop;
+static struct ev_loop* thread_loop;
+static struct ev_async w_main_async;
+static struct ev_async w_thread_async;
+
+//static struct sockaddr_in addr;
 
 
 void StrRev()
@@ -67,15 +68,21 @@ void *myThreadFun()
     ev_async_init(&w_thread_async, StrRev);
     ev_async_start(thread_loop, &w_thread_async);
     ev_loop(thread_loop, 0);
+    return NULL;
 }
 
 
 
-int read_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
+void read_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
 {
     //Queue* p = create_Queue(watcher->fd);
     struct entry *p = (struct entry *)malloc(sizeof(struct entry));
-    p->client_sd = watcher->fd;
+    if(p == NULL)
+    {
+        printf("error in malloc\n");
+    }
+    p->client_fd = watcher->fd;
+    *(p->buffer) = '\0';
     ssize_t r = recv(watcher->fd, p->buffer, sizeof(p->buffer), MSG_NOSIGNAL);
     if(r<0)
     {
@@ -83,7 +90,7 @@ int read_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
         ev_io_stop(main_loop, watcher);
         free(watcher);
         free(p);
-        return 0;
+        return;
     }
     if(r==0)
     {
@@ -91,7 +98,7 @@ int read_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
         ev_io_stop(main_loop, watcher);
         free(watcher);
         free(p);
-        return 0;
+        return;
     }
     if(r>0)
     {
@@ -104,66 +111,108 @@ int read_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
 
         //послать сигнал в второй поток, что данные можно обрабатывать
         ev_async_send(thread_loop, &w_thread_async);
+        return;
     }
 }
 
 
-int accept_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
+void accept_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
 {
-    int client_sd = accept(watcher->fd, 0, 0);
-    printf("New connection, allocated sd = %d\n", client_sd);
+    int client_fd = accept(watcher->fd, 0, 0);
+    printf("New connection, allocated fd = %d\n", client_fd);
     struct ev_io *w_client = (struct ev_io *) malloc(sizeof(struct ev_io));
-    ev_io_init(w_client, read_cb, client_sd, EV_READ);
+    if(w_client == NULL)
+    {
+        printf("error in accept_cb malloc\n");
+        return;
+    }
+    ev_io_init(w_client, read_cb, client_fd, EV_READ|EV_WRITE);
     ev_io_start(main_loop, w_client);
 }
 
-int send_func()
+void send_func()
 {
     pthread_mutex_lock(&my_mutex);
     struct entry *a = STAILQ_FIRST(&head_send);
     STAILQ_REMOVE_HEAD(&head_send, entries);     /* Deletion from the head */
     //Queue* a = pop_from_Queue(head_Queue_send_el, tail_Queue_send_el);
     pthread_mutex_unlock(&my_mutex);
-    send(a->client_sd, a->buffer, strlen(a->buffer), 0);
-    send(a->client_sd, "\n", 1 , 0);
+    send(a->client_fd, a->buffer, strlen(a->buffer), 0);
+    send(a->client_fd, "\n", 1 , 0);
+    /*
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(12345);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    int i, len, bytes;
+    char buffer[3][100];
+    struct iovec io[3];
+    struct msghdr msg;
+    msg.msg_name = &addr;
+    msg.msg_namelen = sizeof(addr);
+    for ( i = 0; i < 3; i++ )
+    {
+        io[i].iov_base = buffer[i];
+        sprintf(buffer[i], "Buffer #%d: this is a test\n", i);
+        io[i].iov_len = strlen(buffer[i]);
+    }
+    msg.msg_iov = io;
+    msg.msg_iovlen = 3;
+    printf("before sending\n");
+    if ( (bytes = sendmsg(a->client_fd, &msg, 0)) < 0 )
+        perror("sendmsg");*/    
+    
     free(a);
 }
 
-int main(int argc, char **argv)
+int main()
 {
     //создаем очередь
-
     STAILQ_INIT(&head_read);
-    STAILQ_INIT(&head_send);  
+    STAILQ_INIT(&head_send);
+
+    int m = pthread_mutex_init(&my_mutex, NULL);
+    if(m!=0)
+    {
+        printf("error in creating mutex\n");
+        return 1;
+    }  
 
     pthread_t thread;
-    pthread_create(&thread, NULL, myThreadFun, NULL);//создаем второй поток
+    int pth = pthread_create(&thread, NULL, myThreadFun, NULL);//создаем второй поток
+    if(pth!=0)
+    {
+        printf("error in pthread_create");
+        return 1;
+    }
 
     printf("Enter tcp port\n");
     int port;
     scanf("%d", &port);
     main_loop = ev_default_loop(0);
 
-    int sd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sd == -1) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1) {
         perror("HH_ERROR: error in calling socket()");
         exit(1);
     };
 
     struct sockaddr_in addr;
-    bzero(&addr, sizeof(addr));
+    //bzero(&addr, sizeof(addr));
+    memset(&addr, '0', sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = INADDR_ANY;
 
-    int b = bind(sd, (struct sockaddr *)&addr, sizeof(addr));
+    int b = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
     if (b < 0)
     {
         perror("HH_ERROR: bind() call failed");
         return 0;
     }
 
-    int l = listen(sd, 5);
+    int l = listen(fd, 5);
     if(l < 0)
     {
         perror("HH_ERROR: listen() call failed");
@@ -171,7 +220,7 @@ int main(int argc, char **argv)
     }
 
     struct ev_io w_accept;
-    ev_io_init(&w_accept, accept_cb, sd, EV_READ);
+    ev_io_init(&w_accept, accept_cb, fd, EV_READ);
     ev_io_start(main_loop, &w_accept);
     
     ev_async_init(&w_main_async, send_func);
