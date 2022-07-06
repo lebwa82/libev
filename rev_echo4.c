@@ -84,13 +84,14 @@ void read_cb(struct ev_loop *main_loop, struct ev_io *watcher, int revents)
     if(p == NULL)
     {
         printf("error in malloc\n");
+        return;
     }
     p->client_fd = watcher->fd;
     *(p->buffer) = '\0';
     ssize_t r = recv(watcher->fd, p->buffer, sizeof(p->buffer), MSG_NOSIGNAL);
     if(r<0)
     {
-        printf("error in %d\n", watcher->fd);
+        printf("error in reading^ r<0 %d\n", watcher->fd);
         ev_io_stop(main_loop, watcher);
         free(watcher);
         free(p);
@@ -139,7 +140,7 @@ void send_func()
     STAILQ_REMOVE_HEAD(&head_send, entries);
     pthread_mutex_unlock(&my_mutex);
     
-    int i, bytes;
+    int bytes;
     struct iovec io[2];
     struct msghdr msg;
     memset(&msg, 0, sizeof(msg));
@@ -182,14 +183,14 @@ int main()
     }
 
     printf("Enter tcp port\n");
-    int port;
-    scanf("%d", &port);
+    uint16_t port;
+    scanf("%hd", &port);
     main_loop = ev_default_loop(0);
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
-        perror("HH_ERROR: error in calling socket()");
-        exit(1);
+        perror("error in calling socket");
+        return 1;
     };
 
     struct sockaddr_in addr;
@@ -201,15 +202,15 @@ int main()
     int b = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
     if (b < 0)
     {
-        perror("HH_ERROR: bind() call failed");
-        return 0;
+        perror("bind call failed");
+        return 1;
     }
 
     int l = listen(fd, 5);
     if(l < 0)
     {
-        perror("HH_ERROR: listen() call failed");
-        exit(1);
+        perror("listen call failed");
+        return 1;
     }
 
     struct ev_io w_accept;
